@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"time"
 
@@ -37,10 +38,24 @@ func createServer(isSender bool) error {
 
 	if isSender {
 		sendTo := <-clientAddr
-		s.Send(sendTo, "testMessage", []byte("test"))
-		time.Sleep(time.Second * 2)
+		dataToSend, err := ioutil.ReadFile("./testPhoto.jpg")
+		// dataToSend, err := ioutil.ReadFile("./testData.txt")
+		if err != nil {
+			panic(err)
+		}
+		for i := 0; i < 10; i++ {
+			s.Send(sendTo, dataToSend)
+			time.Sleep(time.Millisecond * 250)
+		}
 		end <- struct{}{}
 	} else {
+		s.Reciver = func(c *rup.Context) {
+			data := []byte{}
+			for newData, ok := <-c.Stream; ok; {
+				data = append(data, newData...)
+				// fmt.Println(len(data))
+			}
+		}
 		clientAddr <- s.ServAddr
 	}
 

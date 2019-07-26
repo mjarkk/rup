@@ -24,14 +24,20 @@ func randomPortNum() string {
 	return ":" + strconv.Itoa(mrand.Intn(65535-10000)+10000)
 }
 
+var seedRandIsCalled = false
+
 // SeedRand seeds the math/rand package so the random numbers
 // are "actually random" *1
 // 1: random as in the value is diffrent every time a function from the math/rand package is called
 func seedRand() error {
+	if seedRandIsCalled {
+		return nil
+	}
 	num, err := rand.Int(rand.Reader, big.NewInt(9223372036854775806)) // https://golang.org/ref/spec#Numeric_types
 	if err != nil {
 		return err
 	}
 	mrand.Seed(num.Int64())
+	seedRandIsCalled = true
 	return nil
 }
