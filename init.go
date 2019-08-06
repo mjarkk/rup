@@ -1,15 +1,16 @@
 package rup
 
-import "net"
+import (
+	"net"
+)
 
 // Start creates a server instace
 // When provided no address address it will take a ramdom poort on 0.0.0.0
 // If there are more than 1 addresess defined the program will return an error
 func Start(options StartOptions) (*Server, error) {
 	server := Server{
-		workingParts: workingParts{
-			parts: []*Context{},
-		},
+		reqs:       map[string]*Context{},
+		BufferSize: 2048,
 	}
 
 	// // Uncomment the data underhere later
@@ -56,6 +57,10 @@ func Start(options StartOptions) (*Server, error) {
 		server.ServAddr = options.Address
 	}
 
+	if options.BufferSize > 0 {
+		server.BufferSize = options.BufferSize
+	}
+
 	server.listen()
 
 	return &server, nil
@@ -67,25 +72,16 @@ func (s *Server) listen() {
 		data []byte
 		addr net.Addr
 	}
-	handeler := make(chan handelerT)
-	for i := 0; i < 5; i++ {
+	// handeler := make(chan handelerT)
+	for i := 0; i < 10; i++ {
 		go func() {
 			for {
-				buff := make([]byte, 2048)
+				buff := make([]byte, s.BufferSize)
 				n, addr, err := s.serv.ReadFrom(buff)
 				if err != nil {
 					return
 				}
-				data := buff[:n]
-				handeler <- handelerT{data, addr}
-			}
-		}()
-	}
-	for i := 0; i < 10000; i++ {
-		go func() {
-			for {
-				r := <-handeler
-				s.handleReq(r.addr, r.data)
+				go s.handleReq(addr, buff[:n])
 			}
 		}()
 	}

@@ -2,88 +2,179 @@ package rup
 
 import (
 	"bytes"
-	"crypto/sha1"
-	"fmt"
 	"net"
 	"strconv"
-	"strings"
+	"time"
 )
-
-var c = 0
 
 // handleReq handles all UDP requests
 func (s *Server) handleReq(addr net.Addr, data []byte) {
-
-	c++
-	if c%4000 == 0 {
-		fmt.Println("Recived", c, "requests")
-	}
-
-	// Check if there is a followup message
-	var followupMsg []byte
-	if len(data) == 2000 {
-		// This message has a followup message
-		slicePart := len(data) - 20
-		followupMsg = data[slicePart:]
-		data = data[:slicePart]
-	}
-	followupMsgS := fmt.Sprintf("%x", followupMsg)
-
 	// Get the meta data from the string
 	nullByte := bytes.IndexByte(data, 0)
 	if nullByte == -1 {
 		// If there is no null byte ignore this message
 		return
 	}
-	meta := parseMeta(string(data[:nullByte]))
+	meta := parseMeta(data[:nullByte])
 	data = data[nullByte+1:]
 
-	// This is the start of a new message
-	if meta.start {
-		s.workingParts.new(s, data, meta.lenght, followupMsgS)
+	length, lengthOk := meta.length.(uint64)
+	start, startOk := meta.start.(bool)
+	ID, idOk := meta.id.(string)
+	msgNum, msgNumOk := meta.messageNum.(uint64)
+	if !idOk || ID == "" {
+		// The message doesn't have a valid id
+		return
+	}
+	if lengthOk && length > 0 && startOk && start {
+		// Createa a new working part
+		s.newReq(addr.String(), ID, length, data)
+		return
+	} else if startOk && start {
+		// Invalid start message
 		return
 	}
 
-	// Add this data part to the currentParts and wait for a removal
-	s.currentParts.add(s, addToCurrentParts{data, fmt.Sprintf("%x", sha1.Sum(data)), followupMsgS})
+	if !msgNumOk || msgNum < 2 {
+		// append messages only start with
+		return
+	}
+
+	// This message is part of another bigger message
+	value, ok := s.reqs[ID]
+	if !ok {
+		return
+	}
+	saddr := addr.String()
+	if value.From != saddr {
+		// The sender address changed
+		value.From = saddr
+	}
+
+	if value.expectNext == 0 {
+		// This request is already finished
+		return
+	} else if msgNum > value.expectNext {
+		// add the data to the upcomming parts and die
+		value.upcommingPartsWLock.Lock()
+		value.upcommingParts[msgNum] = data
+		value.upcommingPartsWLock.Unlock()
+		return
+	} else if msgNum < value.expectNext {
+		// The id is lower that what wa already have in our cache
+		return
+	}
+	value.addData(s, data)
+}
+
+func (c *Context) addData(s *Server, data []byte) {
+	c.buffWLock.Lock()
+	c.buff = append(c.buff, data...)
+	c.buffWLock.Unlock()
+	c.ReciveSize += uint64(len(data))
+	eof := c.ReciveSize == c.MessageSize
+	if eof {
+		c.expectNext = 0
+	} else {
+		c.expectNext++
+	}
+
+	if eof || len(c.buff) > 5000 {
+		// The buffer is full or this is the end of the message,
+		// We can search the buffer to the channel
+		if c.sendBuffer(s) {
+			return
+		}
+	}
+
+	time.Sleep(time.Microsecond * 2)
+	// Check if there is a followup message in the upcommingParts map
+	c.upcommingPartsWLock.Lock()
+	data, ok := c.upcommingParts[c.expectNext]
+	c.upcommingPartsWLock.Unlock()
+	if ok {
+		c.addData(s, data)
+		return
+	}
+	time.Sleep(time.Millisecond)
+}
+
+// sendBuffer sends the current buffer over the stream channel
+// The return boolean indicates if this was the last message send to the buffer
+func (c *Context) sendBuffer(s *Server) bool {
+	c.buffWLock.Lock()
+	buffToSend := c.buff
+	c.buff = []byte{}
+	c.buffWLock.Unlock()
+	c.Stream <- buffToSend
+	if c.expectNext != 0 {
+		return false
+	}
+	// WHAA it's the end kill the request
+	// this is really dark
+	close(c.Stream)
+	delete(s.reqs, c.ID)
+	c = nil
+	return true
 }
 
 type metaT struct {
-	start  bool  // Is this the first message
-	lenght int64 // The total message lenght
+	start      interface{} // s (bool) is this the starting message
+	id         interface{} // i (string) The message set id
+	messageNum interface{} // n (uint64) The message it's nummber
+	length     interface{} // l (uint64) The total message lenght
 }
 
 // parseMeta transforms s into a meta type
-func parseMeta(s string) metaT {
+func parseMeta(s []byte) metaT {
 	meta := metaT{}
+	bindings := map[rune]struct {
+		binding   *interface{}
+		valueType string
+	}{
+		's': {&meta.start, "bool"},
+		'i': {&meta.id, "string"},
+		'n': {&meta.messageNum, "uint64"},
+		'l': {&meta.length, "uint64"},
+	}
+
 	if len(s) == 0 {
 		return meta
 	}
-	partsList := strings.Split(s, ",")
-	parts := map[rune]string{}
+	partsList := bytes.Split(s, []byte(","))
+
 	for _, part := range partsList {
-		keyAndValue := strings.SplitN(part, ":", 2)
-		key := ""
-		value := ""
+		keyAndValue := bytes.SplitN(part, []byte(":"), 2)
+		var key rune
+		var value []byte
 		switch len(keyAndValue) {
 		case 0:
 			continue
 		case 1:
-			key = keyAndValue[0]
+			key = rune(keyAndValue[0][0])
+			value = []byte{}
 		default:
-			key = keyAndValue[0]
+			key = rune(keyAndValue[0][0])
 			value = keyAndValue[1]
 		}
-		parts[rune(key[0])] = value
-	}
-	if _, ok := parts['s']; ok {
-		meta.start = true
-	}
-	if val, ok := parts['l']; ok && val != "" {
-		size, err := strconv.ParseInt(val, 10, 64)
-		if err == nil {
-			meta.lenght = size
+		binding, ok := bindings[rune(key)]
+		if !ok {
+			continue
+		}
+		switch binding.valueType {
+		case "bool":
+			*binding.binding = true
+		case "string":
+			*binding.binding = string(value)
+		case "uint64":
+			if len(value) != 0 {
+				parsedVal, err := strconv.ParseUint(string(value), 10, 64)
+				if err == nil {
+					*binding.binding = parsedVal
+				}
+			}
 		}
 	}
+
 	return meta
 }
