@@ -1,5 +1,5 @@
 # `rup` A reliable udp server/client package
-*the name rup based of [rudp](http://example.com) but witout the p*
+*the name is based on the [rudp from plan 9](https://en.wikipedia.org/wiki/Reliable_User_Datagram_Protocol) but witout the p*
 
 ## But why?
 Simply because there seems to be no library/protocol that works over udp, works like a http request, can do UDP hole punching, is not bloated and not focused on web.  
