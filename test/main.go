@@ -43,7 +43,7 @@ func createServer(isSender bool) error {
 		if err != nil {
 			panic(err)
 		}
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 1; i++ {
 			s.Send(sendTo, dataToSend)
 			time.Sleep(time.Millisecond * 250)
 		}
@@ -51,10 +51,15 @@ func createServer(isSender bool) error {
 	} else {
 		s.Reciver = func(c *rup.Context) {
 			data := []byte{}
-			for newData, ok := <-c.Stream; ok; {
+			for {
+				newData, ok := <-c.Stream
+				if !ok {
+					break
+				}
+				fmt.Println("recived:", len(data))
 				data = append(data, newData...)
-				// fmt.Println(len(data))
 			}
+			fmt.Println("EOF")
 		}
 		clientAddr <- s.ServAddr
 	}
