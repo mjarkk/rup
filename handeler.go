@@ -2,15 +2,41 @@ package rup
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"strconv"
 	"time"
 )
 
+func (s *Server) handleReqParts(addr net.Addr, data []byte) {
+	requests := bytes.Split(data, []byte{0x00})
+	fmt.Printf("reqeust for %v parts\n", len(requests))
+}
+
+func (s *Server) handleConfirm(addr net.Addr, data []byte) {
+	parts := bytes.Split(data, []byte{0x00})
+	if len(parts) == 0 {
+		return
+	}
+	sending, ok := s.sending[string(parts[0])]
+	if !ok {
+		return
+	}
+	ids := []uint64{}
+	for _, id := range parts[1:] {
+		out, err := strconv.ParseUint(string(id), 10, 64)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, out)
+	}
+	sending.confirm(ids)
+}
+
 // handleReq handles all UDP requests
 func (s *Server) handleReq(addr net.Addr, data []byte) {
 	// Get the meta data from the string
-	nullByte := bytes.IndexByte(data, 0)
+	nullByte := bytes.IndexByte(data, 0x00)
 	if nullByte == -1 {
 		// If there is no null byte ignore this message
 		return
@@ -28,6 +54,7 @@ func (s *Server) handleReq(addr net.Addr, data []byte) {
 	}
 	if lengthOk && length > 0 && startOk && start {
 		// Createa a new working part
+		s.sendConfirm(addr.String(), ID, []uint64{1})
 		s.newReq(addr.String(), ID, length, data)
 		return
 	} else if startOk && start {

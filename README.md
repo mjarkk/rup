@@ -4,7 +4,7 @@
 *the name is based on the [rudp from plan 9](https://en.wikipedia.org/wiki/Reliable_User_Datagram_Protocol) but witout the p*
 
 ## But why?
-Simply because there seems to be no library/protocol that works over udp, works like a http request, can do UDP hole punching, is not bloated and not focused on web.  
+Simply because there seems to be no library/protocol that works over udp, works like as easy as an http request, can do UDP hole punching, is **not** bloated and not focused on web.  
 Thinks i've considered before making this:    
 - **WebRTC** - Could work but there focus is realtime video/audio streams on the web
 - **Stun/Turn** - Could work but i don't like the stun nor turn protocol

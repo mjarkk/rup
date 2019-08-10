@@ -4,11 +4,17 @@ import (
 	"net"
 )
 
+type sendHandelers struct {
+	confirm func(msgNumbers []uint64)
+	req     func(msgNumbers [][]uint64)
+}
+
 // Start creates a server instace
 // When provided no address address it will take a ramdom poort on 0.0.0.0
 // If there are more than 1 addresess defined the program will return an error
 func Start(options StartOptions) (*Server, error) {
 	server := Server{
+		sending:    map[string]*sendHandelers{},
 		reqs:       map[string]*Context{},
 		BufferSize: 2048,
 	}
@@ -81,7 +87,16 @@ func (s *Server) listen() {
 				if err != nil {
 					return
 				}
-				go s.handleReq(addr, buff[:n])
+				dataHandelers := map[rune]func(addr net.Addr, buff []byte){
+					'd': s.handleReq,
+					'r': s.handleReqParts,
+					'c': s.handleConfirm,
+				}
+				handeler, ok := dataHandelers[rune(buff[0])]
+				if !ok {
+					return
+				}
+				go handeler(addr, buff[1:n])
 			}
 		}()
 	}

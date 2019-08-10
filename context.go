@@ -1,6 +1,9 @@
 package rup
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // Context contains all information
 type Context struct {
@@ -70,7 +73,7 @@ func (s *Server) newReq(From, ID string, MessageSize uint64, startBytes []byte) 
 	}
 
 	if s.Reciver != nil {
-		s.Reciver(c)
+		go s.Reciver(c)
 		c.Stream <- startBytes
 	}
 
@@ -78,6 +81,8 @@ func (s *Server) newReq(From, ID string, MessageSize uint64, startBytes []byte) 
 	if requestDune {
 		close(c.Stream)
 		c = nil
+		time.Sleep(time.Millisecond * 5)
+		s.sendConfirm(From, ID, []uint64{1})
 		return
 	}
 

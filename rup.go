@@ -13,6 +13,8 @@ type Server struct {
 	Reciver         func(*Context)
 	reqsWLock       sync.RWMutex
 	reqs            map[string]*Context
+	sendingWLock    sync.RWMutex
+	sending         map[string]*sendHandelers
 	rsaPrivKey      *rsa.PrivateKey
 	rsaPubKeyString string
 	BufferSize      int
@@ -20,7 +22,7 @@ type Server struct {
 
 // StartOptions are the options for the start function
 type StartOptions struct {
-	// Address is a custom address use
+	// Address is a *ustom address use
 	// If empty the program will select one for you
 	Address string
 
