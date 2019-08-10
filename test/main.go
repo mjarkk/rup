@@ -56,7 +56,7 @@ func createServer(isSender bool) error {
 				if !ok {
 					break
 				}
-				fmt.Println("recived:", len(data))
+				// fmt.Println("recived:", len(data))
 				data = append(data, newData...)
 			}
 			fmt.Println("EOF")
