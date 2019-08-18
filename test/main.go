@@ -64,5 +64,6 @@ func createServer(isSender bool) error {
 		clientAddr <- s.ServAddr
 	}
 
+	fmt.Println("End!")
 	return nil
 }
