@@ -34,6 +34,7 @@ func main() {
 		}
 	}()
 	<-end
+	time.Sleep(time.Millisecond * 500)
 	fmt.Println("End!")
 }
 
@@ -53,6 +54,7 @@ func createServer(isSender bool) error {
 		}
 		for i := 0; i < 1; i++ {
 			s.Send(sendTo, dataToSend)
+			fmt.Println("SEND END")
 			time.Sleep(time.Millisecond * 250)
 		}
 		end <- struct{}{}

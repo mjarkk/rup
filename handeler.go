@@ -107,10 +107,17 @@ func (s *Server) handleReq(addr net.Addr, data []byte) {
 func (c *Context) waitForNewMessages(s *Server) {
 	failCount := 0
 	for {
+		c.upcommingPartsWLock.Lock()
 		data, ok := c.upcommingParts[c.ReciveSize]
+		c.upcommingPartsWLock.Unlock()
+
 		if ok {
 			failCount = 0
+
+			c.upcommingPartsWLock.Lock()
 			delete(c.upcommingParts, c.ReciveSize)
+			c.upcommingPartsWLock.Unlock()
+
 			c.buff.Write(data)
 			c.ReciveSize += uint64(len(data))
 			if c.ReciveSize >= c.MessageSize || c.buff.Len() > 5000 {
@@ -141,8 +148,13 @@ func (c *Context) sendBuffer(s *Server) bool {
 	c.buff = bytes.NewBuffer(nil)
 	c.buffWLock.Unlock()
 	if c.Stream == nil {
+		s.reqsWLock.Lock()
+		delete(s.reqs, c.ID)
+		s.reqsWLock.Unlock()
+		c = nil
 		return true
 	}
+
 	c.Stream <- buffToSend
 	if c.ReciveSize < c.MessageSize {
 		return false
@@ -153,7 +165,14 @@ func (c *Context) sendBuffer(s *Server) bool {
 	s.reqsWLock.Lock()
 	delete(s.reqs, c.ID)
 	s.reqsWLock.Unlock()
+
+	for i := 0; i < 3; i++ {
+		time.Sleep(time.Millisecond * 2)
+		s.sendConfirm(c.From, c.ID, c.MessageSize)
+	}
+
 	c = nil
+
 	return true
 }
 
