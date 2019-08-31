@@ -1,18 +1,21 @@
 ![logo](https://i.imgur.com/tvDHssX.png)
 
-# `rup` A reliable udp server/client package
+# `rup` A reliable udp server & client library
 *the name is based on the [rudp from plan 9](https://en.wikipedia.org/wiki/Reliable_User_Datagram_Protocol) but witout the p*
 
 ## But why?
-Simply because there seems to be no library/protocol that works over udp, works like as easy as an http request, can do UDP hole punching, is **not** bloated and not focused on web.  
-Thinks i've considered before making this:    
-- **WebRTC** - Could work but there focus is realtime video/audio streams on the web
-- **Stun/Turn** - Could work but i don't like the stun nor turn protocol
-- **HTTP/3 (quic)** - Probebly one of the best alternatives but there main focus is being a web protocol what is one of the things i don't want
+Fist of all i just made this to learn a lot.  
+But secondly i'm planing to use this in a bigger project that needs a libary/protocol like this to succeed.  
 
-And i like learning new things, this seemed like a good chelange :),  
-
-## Feathers
+## Feather goals
 - Fast
 - Reliable
 - Support for UDP hole punching
+
+### Where are the docs
+At the moment the project is still in a early stage of development and there for lots of changers.  
+Due to that i'm not providing any documentation for now.  
+
+## Alternatives
+- **[WebRTC](https://webrtc.org/)**
+- **[HTTP/3 (quic)](https://quicwg.org/base-drafts/draft-ietf-quic-http.html)**
