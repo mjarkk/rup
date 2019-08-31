@@ -2,9 +2,7 @@ package rup
 
 import (
 	"bytes"
-	"crypto/sha1"
 	"errors"
-	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -72,7 +70,12 @@ func genMsgID() (string, error) {
 
 // Send sends a message
 func (s *Server) Send(to string, msg []byte) error {
-	fmt.Printf("Sending: %x\n", sha1.Sum(msg))
+
+	// Fix for an anoying windows bug:
+	// > https://github.com/golang/go/issues/15216
+	if strings.HasPrefix(to, ":") {
+		to = "127.0.0.1" + to
+	}
 
 	// Get the address
 	addr, err := getAddr(to)
@@ -134,11 +137,13 @@ func (s *Server) Send(to string, msg []byte) error {
 	recivedFirstRequst := false
 	s.sendingWLock.Lock()
 	s.sending[messageID] = &sendHandelers{
-		confirm: func(end uint64) {
-			if end == firstPartLenght {
+		confirm: func(to uint64) {
+			if to == firstPartLenght {
 				recivedFirstRequst = true
 			}
-			confirmedRecivedTo = end
+			if to > confirmedRecivedTo {
+				confirmedRecivedTo = to
+			}
 		},
 		req: func(from uint64) {
 			if from < confirmedRecivedTo {
@@ -157,11 +162,6 @@ func (s *Server) Send(to string, msg []byte) error {
 		for {
 			if ended {
 				return
-			}
-			if int(confirmedRecivedTo) >= len(msg) {
-				// Req fininshed
-				end <- nil
-				break
 			}
 			if checkNum == 5 {
 				end <- ErrReqTimedOut
@@ -183,6 +183,11 @@ func (s *Server) Send(to string, msg []byte) error {
 		for {
 			if ended {
 				return
+			}
+			if int(confirmedRecivedTo) >= len(msg) {
+				// Req fininshed
+				end <- nil
+				break
 			}
 
 			currentPositionLock.Lock()

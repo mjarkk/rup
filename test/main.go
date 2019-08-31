@@ -47,13 +47,16 @@ func createServer(isSender bool) error {
 	if isSender {
 		sendTo := <-clientAddr
 		// dataToSend, err := ioutil.ReadFile("./testPhoto.jpg")
-		// dataToSend, err := ioutil.ReadFile("./testData.txt")
-		dataToSend, err := ioutil.ReadFile("./largeTestData.txt")
+		dataToSend, err := ioutil.ReadFile("./testData.txt")
+		// dataToSend, err := ioutil.ReadFile("./largeTestData.txt")
 		if err != nil {
 			panic(err)
 		}
 		for i := 0; i < 1; i++ {
-			s.Send(sendTo, dataToSend)
+			err := s.Send(sendTo, dataToSend)
+			if err != nil {
+				panic(err)
+			}
 			fmt.Println("SEND END")
 			time.Sleep(time.Millisecond * 250)
 		}
