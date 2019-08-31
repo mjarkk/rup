@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha1"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -9,8 +10,13 @@ import (
 	"github.com/mjarkk/rup"
 )
 
-var clientAddr = make(chan string)
-var end = make(chan struct{})
+var clientAddr chan string
+var end chan struct{}
+
+func init() {
+	end = make(chan struct{})
+	clientAddr = make(chan string)
+}
 
 func main() {
 	go func() {
@@ -28,6 +34,7 @@ func main() {
 		}
 	}()
 	<-end
+	fmt.Println("End!")
 }
 
 func createServer(isSender bool) error {
@@ -38,8 +45,9 @@ func createServer(isSender bool) error {
 
 	if isSender {
 		sendTo := <-clientAddr
-		dataToSend, err := ioutil.ReadFile("./testPhoto.jpg")
+		// dataToSend, err := ioutil.ReadFile("./testPhoto.jpg")
 		// dataToSend, err := ioutil.ReadFile("./testData.txt")
+		dataToSend, err := ioutil.ReadFile("./largeTestData.txt")
 		if err != nil {
 			panic(err)
 		}
@@ -56,14 +64,12 @@ func createServer(isSender bool) error {
 				if !ok {
 					break
 				}
-				// fmt.Println("recived:", len(data))
 				data = append(data, newData...)
 			}
-			fmt.Println("EOF")
+			fmt.Printf("EOF: %x\n", sha1.Sum(data))
+			end <- struct{}{}
 		}
 		clientAddr <- s.ServAddr
 	}
-
-	fmt.Println("End!")
 	return nil
 }

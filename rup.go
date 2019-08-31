@@ -17,7 +17,7 @@ type Server struct {
 	sending         map[string]*sendHandelers
 	rsaPrivKey      *rsa.PrivateKey
 	rsaPubKeyString string
-	BufferSize      int
+	BufferSize      uint64
 }
 
 // StartOptions are the options for the start function
@@ -32,5 +32,5 @@ type StartOptions struct {
 	// BufferSize is the buffer size used for the udp pacakge
 	// The later they are the less cpu intensive they are butt they will be less reliable
 	// Default (2048) is used when BufferSize <= 0
-	BufferSize int
+	BufferSize uint64
 }

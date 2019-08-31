@@ -1,6 +1,7 @@
 package rup
 
 import (
+	"bytes"
 	"sync"
 	"time"
 )
@@ -18,7 +19,11 @@ type Context struct {
 	// This can be used for tracking the recive process
 	MessageSize uint64
 
-	// ReciveSize is the size of what we currently have recived
+	// ReciveSize is the size of what we currently have recived (this does not count the upcommingParts)
+	// If this is equal or more than MessageSize the message is completed
+	//
+	// This library doesn't check for data integrity thus the
+	// ReciveSize can't be trusted to go never above the MessageSize
 	ReciveSize uint64
 
 	// upcommingParts are parts for this message
@@ -29,11 +34,7 @@ type Context struct {
 	// Channels seem somewhat slow so we buffer some parts first before sending them
 	// NOTE: probebly subject to change
 	buffWLock sync.RWMutex
-	buff      []byte
-
-	// expectNext is the id of the next expected block
-	// NOTE: probebly subject to change
-	expectNext uint64
+	buff      *bytes.Buffer
 
 	// Stream is the channel whereover the library will send all message data
 	// If there is no data is left (thus the message is completed) this channel will be closed,
@@ -43,23 +44,19 @@ type Context struct {
 	//	   fmt.Println("No data left!, Message completed")
 	//   }
 	Stream chan []byte
+
+	// sendedReqForPart holds the number of the current requested part that is maybe missing
+	sendedReqForPart uint64
 }
 
 // newReq creates a new s.req
-func (s *Server) newReq(From, ID string, MessageSize uint64, startBytes []byte) {
+func (s *Server) newReq(From, ID string, MessageSize uint64, startBytes []byte) *Context {
 	if ID == "" {
-		return
+		return nil
 	}
 
 	startBytesLen := uint64(len(startBytes))
 	requestDune := MessageSize <= startBytesLen
-
-	// all messages start with 1 because 0 means there is no next message expected
-	// that means that if this is the first (1) message than the next will be (2)
-	expectNext := 2
-	if requestDune {
-		expectNext = 0
-	}
 
 	c := &Context{
 		ID:             ID,
@@ -67,8 +64,7 @@ func (s *Server) newReq(From, ID string, MessageSize uint64, startBytes []byte) 
 		MessageSize:    MessageSize,
 		ReciveSize:     startBytesLen,
 		upcommingParts: map[uint64][]byte{},
-		buff:           []byte{},
-		expectNext:     uint64(expectNext),
+		buff:           bytes.NewBuffer(nil),
 		Stream:         make(chan []byte),
 	}
 
@@ -82,11 +78,12 @@ func (s *Server) newReq(From, ID string, MessageSize uint64, startBytes []byte) 
 		close(c.Stream)
 		c = nil
 		time.Sleep(time.Millisecond * 5)
-		s.sendConfirm(From, ID, []uint64{1})
-		return
+		s.sendConfirm(From, ID, startBytesLen)
+		return nil
 	}
 
 	s.reqsWLock.Lock()
 	s.reqs[ID] = c
 	s.reqsWLock.Unlock()
+	return c
 }

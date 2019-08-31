@@ -5,8 +5,8 @@ import (
 )
 
 type sendHandelers struct {
-	confirm func(msgNumbers []uint64)
-	req     func(msgNumbers [][]uint64)
+	confirm func(end uint64)
+	req     func(from uint64)
 }
 
 // Start creates a server instace
@@ -79,6 +79,11 @@ func (s *Server) listen() {
 		addr net.Addr
 	}
 	// handeler := make(chan handelerT)
+	dataHandelers := map[rune]func(addr net.Addr, buff []byte){
+		'd': s.handleReq,
+		'r': s.handleMissingPart,
+		'c': s.handleConfirm,
+	}
 	for i := 0; i < 10; i++ {
 		go func() {
 			for {
@@ -86,11 +91,6 @@ func (s *Server) listen() {
 				n, addr, err := s.serv.ReadFrom(buff)
 				if err != nil {
 					return
-				}
-				dataHandelers := map[rune]func(addr net.Addr, buff []byte){
-					'd': s.handleReq,
-					'r': s.handleReqParts,
-					'c': s.handleConfirm,
 				}
 				handeler, ok := dataHandelers[rune(buff[0])]
 				if !ok {

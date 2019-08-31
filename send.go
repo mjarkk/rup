@@ -2,213 +2,240 @@ package rup
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofrs/uuid"
 )
 
+var (
+	// ErrReqTimedOut tells if the request is timed out
+	ErrReqTimedOut = errors.New("Request timed out")
+)
+
 // sendConfirm sends a confirm message back to the sender
 //
 // Message layout:
-// 63 {utf8 messageID} 00 {utf8 msg number} 00 {utf8 msg number} 00 {utf8 msg number} 00 {utf8 msg number} ...
+// 63 {utf8 messageID} 00 {utf8 range end}
 // 63 = "c"
-func (s *Server) sendConfirm(to, messageID string, msgNumbers []uint64) error {
+func (s *Server) sendConfirm(to, messageID string, rangeEnd uint64) error {
 	addr, err := net.ResolveUDPAddr("udp", to)
 	if err != nil {
 		return err
 	}
 
-	parts := [][]byte{}
-	for _, msgNum := range msgNumbers {
-		parts = append(parts, []byte(strconv.FormatUint(msgNum, 10)))
-	}
-	msgToSend := bytes.Join(parts, []byte{0x00})                      // Add the confirmed ID's
-	msgToSend = append(append([]byte(messageID), 0x00), msgToSend...) // Add the message ID
-	msgToSend = append([]byte("c"), msgToSend...)                     // Add the message type
-	_, err = s.serv.WriteToUDP(msgToSend, addr)
+	toSend := bytes.NewBufferString("c" + messageID)
+	toSend.Write([]byte{0x00})
+	toSend.WriteString(strconv.FormatUint(rangeEnd, 10))
+
+	_, err = s.serv.WriteToUDP(toSend.Bytes(), addr)
 	return err
 }
 
-// sendReqParts sends a req part to the sender
-// the ids a dubble slice because this allows for request ranges
-// for example:
-// []uint64{[]uint64{554, 700}}
-//   requests for package 554 to 700
-// []uint64{[]uint64{554}}
-//   request only for package 554
-// []uint64{[]uint64{400, 500}, []uint64{502, 600}}
-//   request for the packges from 400 till 500 and from 502 till 600
-// []uint64{[]uint64{554}, []uint64{557}}
-//   request just 2 packages
-//
-// There are also ilegal request
-// These won't cause an error but will have unsubspected behavior when executing
-// []uint64{[]uint64{100, 200, 300}}
-//   you cant request a range from 100 to 200 and then 300
+// sendMissingPart sends a req to start sending again from a spesific part
 //
 // Message layout:
-// 72 {utf8 messageID} 00 {utf8 msg number} 2d {utf8 msg number} 00 {utf8 msg number} 2d {utf8 msg number} 00 {utf8 msg number} 2d {utf8 msg number}...
-// OR
-// 72 {utf8 messageID} 00 {utf8 msg number} 00 {utf8 msg number} 00 {utf8 msg number}...
-// 72 = "r"
-// 2d = "-"
-func (s *Server) sendReqParts(to, messageID string, msgNums [][]uint64) error {
+// 0x72 {utf8 messageID} 0x00 {utf8 from}
+// 0x72 = "r"
+// 0x2d = "-"
+func (s *Server) sendMissingPart(to, messageID string, from uint64) error {
 	addr, err := net.ResolveUDPAddr("udp", to)
 	if err != nil {
 		return err
 	}
 
-	reqeustArr := [][]byte{}
-	for _, part := range msgNums {
-		toAdd := []string{}
-		for _, num := range part {
-			toAdd = append(toAdd, strconv.FormatUint(num, 10))
-		}
-		reqeustArr = append(reqeustArr, []byte(strings.Join(toAdd, "-")))
-	}
-	reqeust := bytes.Join(reqeustArr, []byte{0x00})
-	reqeust = append(append([]byte(messageID), 0x00), reqeust...)
-	reqeust = append([]byte("r"), reqeust...)
+	toSend := bytes.NewBufferString("r" + messageID)
+	toSend.Write([]byte{0x00})
+	toSend.WriteString(strconv.FormatUint(from, 10))
 
-	_, err = s.serv.WriteToUDP(reqeust, addr)
+	_, err = s.serv.WriteToUDP(toSend.Bytes(), addr)
 	return err
 }
 
-type reLoopReq struct {
-	start int
-	end   int // use 0 or -1 to ignore
+func getAddr(addr string) (*net.UDPAddr, error) {
+	return net.ResolveUDPAddr("udp", addr)
+}
+
+func genMsgID() (string, error) {
+	uuidV4, err := uuid.NewV4()
+	if err != nil {
+		return "", err
+	}
+	return strings.Replace(uuidV4.String(), "-", "", -1), nil
 }
 
 // Send sends a message
 func (s *Server) Send(to string, msg []byte) error {
-	addr, err := net.ResolveUDPAddr("udp", to)
+	fmt.Printf("Sending: %x\n", sha1.Sum(msg))
+
+	// Get the address
+	addr, err := getAddr(to)
 	if err != nil {
 		return err
 	}
 
 	// Generate the message it's id
-	uuidV4, err := uuid.NewV4()
+	messageID, err := genMsgID()
 	if err != nil {
 		return err
 	}
-	messageID := strings.Replace(uuidV4.String(), "-", "", -1)
 
-	msgReqLoop := make(chan reLoopReq)
-	defer func() {
-		msgReqLoop = nil
-		s.sendingWLock.Lock()
-		delete(s.sending, messageID)
-		s.sendingWLock.Unlock()
-	}()
+	var firstPartLenght uint64
 
-	leftOverMsgToSmall := errors.New("buffer size to small")
-	sendPart := func(messageNum int, startMessage bool) error {
-		if (messageNum)*s.BufferSize > len(msg) {
-			return leftOverMsgToSmall
+	// n is the total written bytes to the
+	sendPart := func(from uint64) (n uint64, err error) {
+		startMessage := from == 0
+		if from >= uint64(len(msg)) {
+			return 0, nil
 		}
 		time.Sleep(time.Microsecond)
 
-		var meta []byte
+		data := bytes.NewBufferString("d")
+		metaData := metaT{
+			id:   messageID,
+			from: from,
+		}
 		if startMessage {
-			meta = addMeta(metaT{
-				start:      true,
-				id:         messageID,
-				length:     uint64(len(msg)),
-				messageNum: messageNum,
-			})
-		} else {
-			meta = addMeta(metaT{
-				id:         messageID,
-				messageNum: messageNum,
-			})
+			metaData.start = true
+			metaData.length = uint64(len(msg))
 		}
-		meta = append([]byte("d"), meta...)
+		addMeta(data, metaData)
 
-		sliceSize := s.BufferSize - len(meta)
-		if len(msg)-(s.BufferSize*messageNum) < sliceSize {
-			sliceSize = len(msg) - (s.BufferSize * messageNum)
+		sliceSize := s.BufferSize - uint64(data.Len())
+		if uint64(len(msg))-from < sliceSize {
+			sliceSize = uint64(len(msg)) - from
+		}
+		if startMessage {
+			firstPartLenght = sliceSize
 		}
 
-		toAdd := msg[s.BufferSize*messageNum : s.BufferSize*messageNum+sliceSize]
+		data.Write(msg[from : from+sliceSize])
 
-		_, err = s.serv.WriteToUDP(append(meta, toAdd...), addr)
-		return err
+		_, err = s.serv.WriteToUDP(data.Bytes(), addr)
+		return sliceSize, err
 	}
 
-	sendPart(1, true)
+	// vars for the main for loop
+	end := make(chan error)
+	var (
+		ended               bool
+		confirmedRecivedTo  uint64
+		currentPosition     uint64
+		currentPositionLock sync.RWMutex
+	)
 
+	// Setting up all functions that need to run in a goroutine
 	recivedFirstRequst := false
 	s.sendingWLock.Lock()
 	s.sending[messageID] = &sendHandelers{
-		confirm: func(msgNumbers []uint64) {
-			if len(msgNumbers) > 0 && msgNumbers[0] == 1 {
+		confirm: func(end uint64) {
+			if end == firstPartLenght {
 				recivedFirstRequst = true
 			}
+			confirmedRecivedTo = end
 		},
-		req: func(msgNumbers [][]uint64) {
-			fmt.Println("recived req for msgNumbers:", msgNumbers)
+		req: func(from uint64) {
+			if from < confirmedRecivedTo {
+				return
+			}
+			confirmedRecivedTo = from
+			currentPositionLock.Lock()
+			currentPosition = from
+			currentPositionLock.Unlock()
 		},
 	}
 	s.sendingWLock.Unlock()
 
 	go func() {
-		msgReqLoop <- reLoopReq{
-			start: 1,
-			end:   -1,
-		}
-		time.Sleep(time.Millisecond * 5)
-		if !recivedFirstRequst {
-			fmt.Println("resending..")
-			sendPart(1, true)
+		checkNum := 0
+		for {
+			if ended {
+				return
+			}
+			if int(confirmedRecivedTo) >= len(msg) {
+				// Req fininshed
+				end <- nil
+				break
+			}
+			if checkNum == 5 {
+				end <- ErrReqTimedOut
+				break
+			}
+			checkNum++
+			time.Sleep(time.Millisecond * 5)
+			if recivedFirstRequst {
+				break
+			}
+			currentPositionLock.Lock()
+			currentPosition = 0
+			currentPositionLock.Unlock()
 		}
 	}()
 
-	for {
-		reLoopData, ok := <-msgReqLoop
-		if !ok {
-			return nil
-		}
-		messageNum := reLoopData.start
-	msgLoop:
+	go func() {
+		// This is the main for loop that sends all parts
 		for {
-			messageNum++
-			if messageNum == reLoopData.end {
-				continue
+			if ended {
+				return
 			}
-			err := sendPart(messageNum, false)
-			switch err {
-			case nil:
-				continue msgLoop
-			case leftOverMsgToSmall:
-				break msgLoop
-			default:
-				return err
+
+			currentPositionLock.Lock()
+			n, err := sendPart(currentPosition)
+			currentPosition += n
+			currentPositionLock.Unlock()
+
+			if err != nil {
+				end <- err
+				break
 			}
+
+			time.Sleep(time.Microsecond)
 		}
-	}
+	}()
+
+	err = <-end
+	ended = true
+	return err
 }
 
-func addMeta(meta metaT) []byte {
-	parts := []string{}
-	add := func(s string) {
-		parts = append(parts, s)
+func addMeta(buff *bytes.Buffer, meta metaT) {
+	items := map[rune]interface{}{
+		'i': meta.id,
+		's': meta.start,
+		'f': meta.from,
+		'l': meta.length,
 	}
-	if val, ok := meta.id.(string); ok {
-		add("i:" + val)
+
+	writtenFirstPart := false
+	for key, val := range items {
+		keyValue := ""
+		switch val.(type) {
+		case string:
+			keyValue = val.(string)
+		case bool:
+		case uint64:
+			keyValue = strconv.Itoa(int(val.(uint64)))
+		case int:
+			keyValue = strconv.Itoa(val.(int))
+		default:
+			continue
+		}
+		if writtenFirstPart {
+			buff.WriteRune(',')
+		}
+		buff.WriteRune(key)
+		if keyValue != "" {
+			buff.WriteString(":" + keyValue)
+		}
+		writtenFirstPart = true
 	}
-	if val, ok := meta.start.(bool); ok && val == true {
-		add("s")
-	}
-	if val, ok := meta.messageNum.(uint64); ok {
-		add("n:" + strconv.Itoa(int(val)))
-	}
-	if val, ok := meta.length.(uint64); ok {
-		add("l:" + strconv.Itoa(int(val)))
-	}
-	return append([]byte(strings.Join(parts, ",")), 0x00)
+
+	buff.Write([]byte{0x00})
+	return
 }

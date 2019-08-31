@@ -2,35 +2,45 @@ package rup
 
 import (
 	"bytes"
-	"fmt"
 	"net"
 	"strconv"
 	"time"
 )
 
-func (s *Server) handleReqParts(addr net.Addr, data []byte) {
-	requests := bytes.Split(data, []byte{0x00})
-	fmt.Printf("reqeust for %v parts\n", len(requests))
+func (s *Server) handleMissingPart(addr net.Addr, data []byte) {
+	parts := bytes.Split(data, []byte{0x00})
+	if len(parts) != 2 {
+		return
+	}
+
+	sending, ok := s.sending[string(parts[0])]
+	if !ok {
+		return
+	}
+
+	from, err := strconv.ParseUint(string(parts[1]), 10, 64)
+	if err != nil {
+		return
+	}
+
+	sending.req(from)
 }
 
 func (s *Server) handleConfirm(addr net.Addr, data []byte) {
 	parts := bytes.Split(data, []byte{0x00})
-	if len(parts) == 0 {
+	if len(parts) != 2 {
 		return
 	}
 	sending, ok := s.sending[string(parts[0])]
 	if !ok {
 		return
 	}
-	ids := []uint64{}
-	for _, id := range parts[1:] {
-		out, err := strconv.ParseUint(string(id), 10, 64)
-		if err != nil {
-			continue
-		}
-		ids = append(ids, out)
+
+	end, err := strconv.ParseUint(string(parts[1]), 10, 64)
+	if err != nil {
+		return
 	}
-	sending.confirm(ids)
+	sending.confirm(end)
 }
 
 // handleReq handles all UDP requests
@@ -47,109 +57,111 @@ func (s *Server) handleReq(addr net.Addr, data []byte) {
 	length, lengthOk := meta.length.(uint64)
 	start, startOk := meta.start.(bool)
 	ID, idOk := meta.id.(string)
-	msgNum, msgNumOk := meta.messageNum.(uint64)
+	from, fromOk := meta.from.(uint64)
 	if !idOk || ID == "" {
 		// The message doesn't have a valid id
 		return
 	}
 	if lengthOk && length > 0 && startOk && start {
 		// Createa a new working part
-		s.sendConfirm(addr.String(), ID, []uint64{1})
-		s.newReq(addr.String(), ID, length, data)
+		s.sendConfirm(addr.String(), ID, uint64(len(data)))
+		c := s.newReq(addr.String(), ID, length, data)
+		if c == nil {
+			return
+		}
+		c.waitForNewMessages(s)
 		return
 	} else if startOk && start {
 		// Invalid start message
 		return
 	}
 
-	if !msgNumOk || msgNum < 2 {
-		// append messages only start with
+	if !fromOk {
 		return
 	}
 
 	// This message is part of another bigger message
-	value, ok := s.reqs[ID]
+	s.reqsWLock.Lock()
+	context, ok := s.reqs[ID]
+	s.reqsWLock.Unlock()
 	if !ok {
 		return
 	}
 	saddr := addr.String()
-	if value.From != saddr {
+	if context.From != saddr {
 		// The sender address changed
-		value.From = saddr
+		context.From = saddr
 	}
 
-	if value.expectNext == 0 {
-		// This request is already finished
-		return
-	} else if msgNum > value.expectNext {
-		// add the data to the upcomming parts and die
-		value.upcommingPartsWLock.Lock()
-		value.upcommingParts[msgNum] = data
-		value.upcommingPartsWLock.Unlock()
-		return
-	} else if msgNum < value.expectNext {
-		// The id is lower that what wa already have in our cache
+	if context.ReciveSize >= context.MessageSize || from < context.ReciveSize {
+		// This request is already finished no need to handle this reqeust
+		// Or the id is lower that what wa already have in our cache
 		return
 	}
-	value.addData(s, data)
+
+	context.upcommingPartsWLock.Lock()
+	context.upcommingParts[from] = data
+	context.upcommingPartsWLock.Unlock()
 }
 
-func (c *Context) addData(s *Server, data []byte) {
-	c.buffWLock.Lock()
-	c.buff = append(c.buff, data...)
-	c.buffWLock.Unlock()
-	c.ReciveSize += uint64(len(data))
-	eof := c.ReciveSize == c.MessageSize
-	if eof {
-		c.expectNext = 0
-	} else {
-		c.expectNext++
-	}
-
-	if eof || len(c.buff) > 5000 {
-		// The buffer is full or this is the end of the message,
-		// We can search the buffer to the channel
-		if c.sendBuffer(s) {
-			return
+func (c *Context) waitForNewMessages(s *Server) {
+	failCount := 0
+	for {
+		data, ok := c.upcommingParts[c.ReciveSize]
+		if ok {
+			failCount = 0
+			delete(c.upcommingParts, c.ReciveSize)
+			c.buff.Write(data)
+			c.ReciveSize += uint64(len(data))
+			if c.ReciveSize >= c.MessageSize || c.buff.Len() > 5000 {
+				// The buffer is full or this is the end of the message,
+				// We can search the buffer to the channel
+				if c.sendBuffer(s) {
+					return
+				}
+			}
+			continue
 		}
-	}
+		failCount++
+		if failCount > 3 {
+			s.sendMissingPart(c.From, c.ID, c.ReciveSize)
+			failCount = 0
+			time.Sleep(time.Millisecond * 2)
+		}
 
-	time.Sleep(time.Microsecond * 2)
-	// Check if there is a followup message in the upcommingParts map
-	c.upcommingPartsWLock.Lock()
-	data, ok := c.upcommingParts[c.expectNext]
-	c.upcommingPartsWLock.Unlock()
-	if ok {
-		c.addData(s, data)
-		return
+		time.Sleep(time.Millisecond)
 	}
-	time.Sleep(time.Millisecond)
 }
 
 // sendBuffer sends the current buffer over the stream channel
 // The return boolean indicates if this was the last message send to the buffer
 func (c *Context) sendBuffer(s *Server) bool {
 	c.buffWLock.Lock()
-	buffToSend := c.buff
-	c.buff = []byte{}
+	buffToSend := c.buff.Bytes()
+	c.buff = bytes.NewBuffer(nil)
 	c.buffWLock.Unlock()
+	if c.Stream == nil {
+		return true
+	}
 	c.Stream <- buffToSend
-	if c.expectNext != 0 {
+	if c.ReciveSize < c.MessageSize {
 		return false
 	}
-	// WHAA it's the end kill the request
-	// this is really dark
+
+	// The request is completed it can now be removed
 	close(c.Stream)
+	s.reqsWLock.Lock()
 	delete(s.reqs, c.ID)
+	s.reqsWLock.Unlock()
 	c = nil
 	return true
 }
 
 type metaT struct {
-	start      interface{} // s (bool) is this the starting message
-	id         interface{} // i (string) The message set id
-	messageNum interface{} // n (uint64) The message it's nummber
-	length     interface{} // l (uint64) The total message lenght
+	start  interface{} // s (bool) is this the starting message
+	id     interface{} // i (string) The message set id
+	from   interface{} // n (uint64) The message it's nummber
+	length interface{} // l (uint64) The total message lenght
 }
 
 // parseMeta transforms s into a meta type
@@ -161,7 +173,7 @@ func parseMeta(s []byte) metaT {
 	}{
 		's': {&meta.start, "bool"},
 		'i': {&meta.id, "string"},
-		'n': {&meta.messageNum, "uint64"},
+		'f': {&meta.from, "uint64"},
 		'l': {&meta.length, "uint64"},
 	}
 
