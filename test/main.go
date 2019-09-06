@@ -10,13 +10,10 @@ import (
 	"github.com/mjarkk/rup"
 )
 
-var clientAddr chan string
-var end chan struct{}
-
-func init() {
-	end = make(chan struct{})
+var (
 	clientAddr = make(chan string)
-}
+	end        = make(chan struct{})
+)
 
 func main() {
 	go func() {
@@ -34,7 +31,7 @@ func main() {
 		}
 	}()
 	<-end
-	time.Sleep(time.Millisecond * 500)
+	time.Sleep(time.Millisecond * 200)
 	fmt.Println("End!")
 }
 
@@ -54,12 +51,13 @@ func createServer(isSender bool) error {
 		}
 		for i := 0; i < 1; i++ {
 			fmt.Printf("Sending: %x\n", sha1.Sum(dataToSend))
+			startTime := time.Now()
 			err := s.Send(sendTo, dataToSend)
 			if err != nil {
 				panic(err)
 			}
+			fmt.Println("time spend:", time.Now().Sub(startTime).String())
 			fmt.Println("SEND END")
-			time.Sleep(time.Millisecond * 250)
 		}
 		end <- struct{}{}
 	} else {
@@ -73,7 +71,6 @@ func createServer(isSender bool) error {
 				data = append(data, newData...)
 			}
 			fmt.Printf("EOF: %x\n", sha1.Sum(data))
-			end <- struct{}{}
 		}
 		clientAddr <- s.ServAddr
 	}
