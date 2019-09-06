@@ -27,13 +27,13 @@ type Context struct {
 	ReciveSize uint64
 
 	// upcommingParts are parts for this message
-	upcommingPartsWLock sync.RWMutex
+	upcommingPartsLock sync.RWMutex
 	upcommingParts      map[uint64][]byte
 
 	// buff is a small buffer that is counted up before sending it over the rec channel
 	// Channels seem somewhat slow so we buffer some parts first before sending them
 	// NOTE: probebly subject to change
-	buffWLock sync.RWMutex
+	buffLock sync.RWMutex
 	buff      *bytes.Buffer
 
 	// Stream is the channel whereover the library will send all message data
@@ -82,8 +82,8 @@ func (s *Server) newReq(From, ID string, MessageSize uint64, startBytes []byte) 
 		return nil
 	}
 
-	s.reqsWLock.Lock()
+	s.reqsLock.Lock()
 	s.reqs[ID] = c
-	s.reqsWLock.Unlock()
+	s.reqsLock.Unlock()
 	return c
 }

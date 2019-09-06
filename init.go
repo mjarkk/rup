@@ -16,7 +16,8 @@ func Start(options StartOptions) (*Server, error) {
 	server := Server{
 		sending:    map[string]*sendHandelers{},
 		reqs:       map[string]*Context{},
-		BufferSize: 2048,
+		BufferSize: 8192,
+		// BufferSize: 2048,
 	}
 
 	// // Uncomment the data underhere later

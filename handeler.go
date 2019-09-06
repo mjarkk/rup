@@ -45,45 +45,35 @@ func (s *Server) handleConfirm(addr net.Addr, data []byte) {
 
 // handleReq handles all UDP requests
 func (s *Server) handleReq(addr net.Addr, data []byte) {
-	// Get the meta data from the string
-	nullByte := bytes.IndexByte(data, 0x00)
-	if nullByte == -1 {
-		// If there is no null byte ignore this message
+	if len(data) < metaSize {
 		return
 	}
-	meta := parseMeta(data[:nullByte])
-	data = data[nullByte+1:]
 
-	length, lengthOk := meta.length.(uint64)
-	start, startOk := meta.start.(bool)
-	ID, idOk := meta.id.(string)
-	from, fromOk := meta.from.(uint64)
-	if !idOk || ID == "" {
-		// The message doesn't have a valid id
+	meta := data[:metaSize]
+	data = data[metaSize:]
+
+	start, id, from, length := parseMeta(meta)
+
+	if len(id) != 32 || length == 0 {
+		// The message id have a valid id
 		return
 	}
-	if lengthOk && length > 0 && startOk && start {
+
+	if start {
 		// Createa a new working part
-		s.sendConfirm(addr.String(), ID, uint64(len(data)))
-		c := s.newReq(addr.String(), ID, length, data)
+		s.sendConfirm(addr.String(), id, uint64(len(data)))
+		c := s.newReq(addr.String(), id, length, data)
 		if c == nil {
 			return
 		}
 		c.waitForNewMessages(s)
 		return
-	} else if startOk && start {
-		// Invalid start message
-		return
-	}
-
-	if !fromOk {
-		return
 	}
 
 	// This message is part of another bigger message
-	s.reqsWLock.Lock()
-	context, ok := s.reqs[ID]
-	s.reqsWLock.Unlock()
+	s.reqsLock.Lock()
+	context, ok := s.reqs[id]
+	s.reqsLock.Unlock()
 	if !ok {
 		return
 	}
@@ -99,24 +89,20 @@ func (s *Server) handleReq(addr net.Addr, data []byte) {
 		return
 	}
 
-	context.upcommingPartsWLock.Lock()
+	context.upcommingPartsLock.Lock()
 	context.upcommingParts[from] = data
-	context.upcommingPartsWLock.Unlock()
+	context.upcommingPartsLock.Unlock()
 }
 
 func (c *Context) waitForNewMessages(s *Server) {
 	failCount := 0
 	for {
-		c.upcommingPartsWLock.Lock()
+		c.upcommingPartsLock.Lock()
 		data, ok := c.upcommingParts[c.ReciveSize]
-		c.upcommingPartsWLock.Unlock()
-
 		if ok {
-			failCount = 0
-
-			c.upcommingPartsWLock.Lock()
 			delete(c.upcommingParts, c.ReciveSize)
-			c.upcommingPartsWLock.Unlock()
+			c.upcommingPartsLock.Unlock()
+			failCount = 0
 
 			c.buff.Write(data)
 			c.ReciveSize += uint64(len(data))
@@ -129,11 +115,13 @@ func (c *Context) waitForNewMessages(s *Server) {
 			}
 			continue
 		}
+
+		c.upcommingPartsLock.Unlock()
+
 		failCount++
 		if failCount > 3 {
 			s.sendMissingPart(c.From, c.ID, c.ReciveSize)
 			failCount = 0
-			time.Sleep(time.Millisecond * 2)
 		}
 
 		time.Sleep(time.Millisecond)
@@ -143,14 +131,14 @@ func (c *Context) waitForNewMessages(s *Server) {
 // sendBuffer sends the current buffer over the stream channel
 // The return boolean indicates if this was the last message send to the buffer
 func (c *Context) sendBuffer(s *Server) bool {
-	c.buffWLock.Lock()
+	c.buffLock.Lock()
 	buffToSend := c.buff.Bytes()
 	c.buff = bytes.NewBuffer(nil)
-	c.buffWLock.Unlock()
+	c.buffLock.Unlock()
 	if c.Stream == nil {
-		s.reqsWLock.Lock()
+		s.reqsLock.Lock()
 		delete(s.reqs, c.ID)
-		s.reqsWLock.Unlock()
+		s.reqsLock.Unlock()
 		c = nil
 		return true
 	}
@@ -162,9 +150,9 @@ func (c *Context) sendBuffer(s *Server) bool {
 
 	// The request is completed it can now be removed
 	close(c.Stream)
-	s.reqsWLock.Lock()
+	s.reqsLock.Lock()
 	delete(s.reqs, c.ID)
-	s.reqsWLock.Unlock()
+	s.reqsLock.Unlock()
 
 	for i := 0; i < 3; i++ {
 		time.Sleep(time.Millisecond * 2)
@@ -174,65 +162,4 @@ func (c *Context) sendBuffer(s *Server) bool {
 	c = nil
 
 	return true
-}
-
-type metaT struct {
-	start  interface{} // s (bool) is this the starting message
-	id     interface{} // i (string) The message set id
-	from   interface{} // n (uint64) The message it's nummber
-	length interface{} // l (uint64) The total message lenght
-}
-
-// parseMeta transforms s into a meta type
-func parseMeta(s []byte) metaT {
-	meta := metaT{}
-	bindings := map[rune]struct {
-		binding   *interface{}
-		valueType string
-	}{
-		's': {&meta.start, "bool"},
-		'i': {&meta.id, "string"},
-		'f': {&meta.from, "uint64"},
-		'l': {&meta.length, "uint64"},
-	}
-
-	if len(s) == 0 {
-		return meta
-	}
-	partsList := bytes.Split(s, []byte(","))
-
-	for _, part := range partsList {
-		keyAndValue := bytes.SplitN(part, []byte(":"), 2)
-		var key rune
-		var value []byte
-		switch len(keyAndValue) {
-		case 0:
-			continue
-		case 1:
-			key = rune(keyAndValue[0][0])
-			value = []byte{}
-		default:
-			key = rune(keyAndValue[0][0])
-			value = keyAndValue[1]
-		}
-		binding, ok := bindings[rune(key)]
-		if !ok {
-			continue
-		}
-		switch binding.valueType {
-		case "bool":
-			*binding.binding = true
-		case "string":
-			*binding.binding = string(value)
-		case "uint64":
-			if len(value) != 0 {
-				parsedVal, err := strconv.ParseUint(string(value), 10, 64)
-				if err == nil {
-					*binding.binding = parsedVal
-				}
-			}
-		}
-	}
-
-	return meta
 }

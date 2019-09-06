@@ -11,9 +11,9 @@ type Server struct {
 	serv            *net.UDPConn
 	ServAddr        string
 	Reciver         func(*Context)
-	reqsWLock       sync.RWMutex
+	reqsLock        sync.RWMutex
 	reqs            map[string]*Context
-	sendingWLock    sync.RWMutex
+	sendingLock     sync.RWMutex
 	sending         map[string]*sendHandelers
 	rsaPrivKey      *rsa.PrivateKey
 	rsaPubKeyString string

@@ -3,6 +3,8 @@ package rup
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -70,7 +72,6 @@ func genMsgID() (string, error) {
 
 // Send sends a message
 func (s *Server) Send(to string, msg []byte) error {
-
 	// Fix for an anoying windows bug:
 	// > https://github.com/golang/go/issues/15216
 	if strings.HasPrefix(to, ":") {
@@ -89,39 +90,27 @@ func (s *Server) Send(to string, msg []byte) error {
 		return err
 	}
 
-	var firstPartLenght uint64
+	partsDataLenght := s.BufferSize - uint64(metaSize) - 1
 
 	// n is the total written bytes to the
-	sendPart := func(from uint64) (n uint64, err error) {
+	sendPart := func(from uint64) error {
 		startMessage := from == 0
 		if from >= uint64(len(msg)) {
-			return 0, nil
+			return nil
 		}
 		time.Sleep(time.Microsecond)
 
 		data := bytes.NewBufferString("d")
-		metaData := metaT{
-			id:   messageID,
-			from: from,
-		}
-		if startMessage {
-			metaData.start = true
-			metaData.length = uint64(len(msg))
-		}
-		addMeta(data, metaData)
+		createMeta(data, startMessage, messageID, from, uint64(len(msg)))
 
-		sliceSize := s.BufferSize - uint64(data.Len())
+		sliceSize := partsDataLenght
 		if uint64(len(msg))-from < sliceSize {
 			sliceSize = uint64(len(msg)) - from
 		}
-		if startMessage {
-			firstPartLenght = sliceSize
-		}
-
 		data.Write(msg[from : from+sliceSize])
 
 		_, err = s.serv.WriteToUDP(data.Bytes(), addr)
-		return sliceSize, err
+		return err
 	}
 
 	// vars for the main for loop
@@ -135,10 +124,10 @@ func (s *Server) Send(to string, msg []byte) error {
 
 	// Setting up all functions that need to run in a goroutine
 	recivedFirstRequst := false
-	s.sendingWLock.Lock()
+	s.sendingLock.Lock()
 	s.sending[messageID] = &sendHandelers{
 		confirm: func(to uint64) {
-			if to == firstPartLenght {
+			if to == partsDataLenght {
 				recivedFirstRequst = true
 			}
 			if to > confirmedRecivedTo {
@@ -150,12 +139,9 @@ func (s *Server) Send(to string, msg []byte) error {
 				return
 			}
 			confirmedRecivedTo = from
-			currentPositionLock.Lock()
-			currentPosition = from
-			currentPositionLock.Unlock()
 		},
 	}
-	s.sendingWLock.Unlock()
+	s.sendingLock.Unlock()
 
 	go func() {
 		checkNum := 0
@@ -184,63 +170,30 @@ func (s *Server) Send(to string, msg []byte) error {
 			if ended {
 				return
 			}
-			if int(confirmedRecivedTo) >= len(msg) {
+			if confirmedRecivedTo > currentPosition {
+				currentPosition = confirmedRecivedTo
+			}
+			if int(currentPosition) >= len(msg) {
 				// Req fininshed
 				end <- nil
 				break
 			}
 
+			fmt.Println("Sending part:", math.Round(float64(100)/float64(len(msg))*float64(currentPosition)))
+
 			currentPositionLock.Lock()
-			n, err := sendPart(currentPosition)
-			currentPosition += n
+			err := sendPart(currentPosition)
+			currentPosition += partsDataLenght
 			currentPositionLock.Unlock()
 
 			if err != nil {
 				end <- err
 				break
 			}
-
-			time.Sleep(time.Microsecond)
 		}
 	}()
 
 	err = <-end
 	ended = true
 	return err
-}
-
-func addMeta(buff *bytes.Buffer, meta metaT) {
-	items := map[rune]interface{}{
-		'i': meta.id,
-		's': meta.start,
-		'f': meta.from,
-		'l': meta.length,
-	}
-
-	writtenFirstPart := false
-	for key, val := range items {
-		keyValue := ""
-		switch val.(type) {
-		case string:
-			keyValue = val.(string)
-		case bool:
-		case uint64:
-			keyValue = strconv.Itoa(int(val.(uint64)))
-		case int:
-			keyValue = strconv.Itoa(val.(int))
-		default:
-			continue
-		}
-		if writtenFirstPart {
-			buff.WriteRune(',')
-		}
-		buff.WriteRune(key)
-		if keyValue != "" {
-			buff.WriteString(":" + keyValue)
-		}
-		writtenFirstPart = true
-	}
-
-	buff.Write([]byte{0x00})
-	return
 }
