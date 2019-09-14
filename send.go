@@ -20,8 +20,8 @@ var (
 // sendConfirm sends a confirm message back to the sender
 //
 // Message layout:
-// 63 {utf8 messageID} 00 {utf8 range end}
-// 63 = "c"
+// 0x63 {utf8 messageID} 0x00 {utf8 range end}
+// 0x63 = "c"
 func (s *Server) sendConfirm(to, messageID string, rangeEnd uint64) error {
 	addr, err := net.ResolveUDPAddr("udp", to)
 	if err != nil {
@@ -41,7 +41,6 @@ func (s *Server) sendConfirm(to, messageID string, rangeEnd uint64) error {
 // Message layout:
 // 0x72 {utf8 messageID} 0x00 {utf8 from}
 // 0x72 = "r"
-// 0x2d = "-"
 func (s *Server) sendMissingPart(to, messageID string, from uint64) error {
 	addr, err := net.ResolveUDPAddr("udp", to)
 	if err != nil {
