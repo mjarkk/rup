@@ -26,11 +26,8 @@ type StartOptions struct {
 	// If empty the program will select one for you
 	Address string
 
-	// RSAPrivateKey can be set to use a self defined rsa private key
-	RSAPrivKey *rsa.PrivateKey
-
 	// BufferSize is the buffer size used for the udp pacakge
 	// The later they are the less cpu intensive they are butt they will be less reliable
-	// Default (2048) is used when BufferSize <= 0
+	// Default (8192) is used when BufferSize <= 0
 	BufferSize uint64
 }

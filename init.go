@@ -17,26 +17,7 @@ func Start(options StartOptions) (*Server, error) {
 		sending:    map[string]*sendHandelers{},
 		reqs:       map[string]*Context{},
 		BufferSize: 8192,
-		// BufferSize: 2048,
 	}
-
-	// // Uncomment the data underhere later
-	//
-	// if options.RSAPrivKey == nil {
-	// 	priv, err := crypt.RSAGenKey(4096)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	server.rsaPrivKey = priv
-	// } else {
-	// 	server.rsaPrivKey = options.RSAPrivKey
-	// }
-	// server.rsaPrivKey.Precompute()
-
-	// err := seedRand()
-	// if err != nil {
-	// 	return nil, err
-	// }
 
 	switch len(options.Address) {
 	case 0:
