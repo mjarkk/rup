@@ -13,6 +13,10 @@ But secondly i'm planing to use this in a bigger project that needs a libary/pro
 - [x] Reliable
 - [x] Support for UDP hole punching
 
+#### Why no security
+I want to use this project for something else where i'm going to inplment my own way of encrypting.  
+because i don't want to dubble encrypt my pacakges i'll leave the ecryption out for now but i'll add encryption to the library if needed.  
+
 ### Where are the docs
 At the moment the project is still in a early stage of development and there for lots of changers.  
 Because of that i'm not providing any documentation for now.  
