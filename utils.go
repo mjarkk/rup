@@ -3,7 +3,6 @@ package rup
 import (
 	"bytes"
 	"crypto/rand"
-	"fmt"
 	"math/big"
 	mrand "math/rand"
 	"net"
@@ -84,7 +83,6 @@ func createMeta(buff *bytes.Buffer, start bool, id string, from, length uint64) 
 	}
 
 	addedBytes += len(id)
-	fmt.Println("id len:", len(id))
 	buff.WriteString(id)
 
 	addedBytes += 8

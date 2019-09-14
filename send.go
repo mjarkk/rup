@@ -3,8 +3,6 @@ package rup
 import (
 	"bytes"
 	"errors"
-	"fmt"
-	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -167,29 +165,31 @@ func (s *Server) Send(to string, msg []byte) error {
 	go func() {
 		// This is the main for loop that sends all parts
 		for {
-			if ended {
-				return
-			}
-			if confirmedRecivedTo > currentPosition {
-				currentPosition = confirmedRecivedTo
-			}
-			if int(currentPosition) >= len(msg) {
-				// Req fininshed
-				end <- nil
-				break
-			}
+			go func(currentPosition uint64) {
+				if ended {
+					return
+				}
+				if confirmedRecivedTo > currentPosition {
+					currentPosition = confirmedRecivedTo
+				}
 
-			fmt.Println("Sending part:", math.Round(float64(100)/float64(len(msg))*float64(currentPosition)))
+				if int(currentPosition) >= len(msg) {
+					// Req fininshed
+					end <- nil
+					return
+				}
+
+				// fmt.Printf("Sending part: %%%d of the %%100\n", int(math.Round(float64(100)/float64(len(msg))*float64(currentPosition))))
+
+				err := sendPart(currentPosition)
+				if err != nil {
+					end <- err
+				}
+			}(currentPosition)
 
 			currentPositionLock.Lock()
-			err := sendPart(currentPosition)
 			currentPosition += partsDataLenght
 			currentPositionLock.Unlock()
-
-			if err != nil {
-				end <- err
-				break
-			}
 		}
 	}()
 
