@@ -31,18 +31,18 @@ That means that if the data length is 1024 bytes and the current from meta item 
 A request messages is send by the reciver and contains a reqeust for missing parts.  
 The message is expected to be send like this:
 ```
-0x63 ("r")
-{utf8 messageID wihout the "-"} 
-0x00 Null byte
-{utf8 range end}
+0x63 "r" > the message id
+  > utf8 messageID wihout the "-"
+0x00 > Null byte
+  > uint request from
 ```
 
 ### `3` Confirm messages
 A Confirm message is send by the reciver to confirm to a defined part of the message has ben recived.  
 The message is expected to be send like this:
 ```
-0x63 ("c")
-{utf8 messageID wihout the "-"} 
+0x63 "c" > the message id
+  > utf8 messageID wihout the "-"
 0x72 Null byte
-{utf8 range end}
+  > uint confirmed to
 ```
