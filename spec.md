@@ -41,7 +41,7 @@ The message is expected to be send like this:
 A Confirm message is send by the reciver to confirm to a defined part of the message has ben recived.  
 The message is expected to be send like this:
 ```
-0x63 ("c)
+0x63 ("c")
 {utf8 messageID wihout the "-"} 
 0x72 Null byte
 {utf8 range end}
